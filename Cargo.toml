@@ -1,0 +1,11 @@
+[package]
+name = "csrf-token"
+version = "0.1.0"
+authors = ["Yusuke Yoshimoto <y.yoshimoto@f-s-r.jp>"]
+publish = false
+
+[dependencies]
+chrono = "0.4.6"
+rand = "0.5.5"
+rust-crypto = "0.2.36"
+failure = "0.1.3"
