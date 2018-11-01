@@ -3,14 +3,27 @@
 extern crate byteorder;
 extern crate chrono;
 extern crate crypto;
+extern crate failure;
 extern crate rand;
 
 use byteorder::{BigEndian, ByteOrder};
 use chrono::prelude::*;
 use chrono::{naive::NaiveDateTime, Duration};
 use crypto::{digest::Digest, sha2::Sha256};
+use failure::Fail;
 use rand::{thread_rng, CryptoRng, Rng, ThreadRng};
 use std::io::{Cursor, Read, Write};
+
+#[derive(Debug, Fail)]
+pub enum CsrfTokenError {
+    #[fail(display = "CSRF token is invalid")]
+    TokenInvalid,
+
+    #[fail(display = "CSRF token is expired")]
+    TokenExpired,
+}
+
+pub type CsrfTokenResult<T> = Result<T, CsrfTokenError>;
 
 struct CsrfToken {
     /// Random value different for each token.
@@ -72,16 +85,6 @@ pub struct CsrfTokenGenerator<D: Digest, R: Rng + CryptoRng> {
     digest: D,
 }
 
-/// Result of token verification.
-pub enum CsrfTokenVerification {
-    /// Token is authentic and alive (not expired).
-    Success,
-    /// Token is authentic but expired.
-    Expired,
-    /// Token is fake.
-    Invalid,
-}
-
 /// Create a `CsrfTokenGenerator` with default nonce size, random number generator
 /// and hash digest generator.
 ///
@@ -97,9 +100,9 @@ pub fn default_csrf_token_generator(
 
 fn compute_digest<D: Digest>(
     digest: &mut D,
-    nonce: &Vec<u8>,
+    nonce: &[u8],
     expiry: &DateTime<Utc>,
-    secret: &Vec<u8>,
+    secret: &[u8],
 ) -> Vec<u8> {
     let mut buf = [0; 8];
     BigEndian::write_i64(&mut buf, expiry.timestamp_nanos());
@@ -115,10 +118,10 @@ fn compute_digest<D: Digest>(
 
 fn verify_token_then_take_expiry<D: Digest>(
     digest: &mut D,
-    secret: Vec<u8>,
+    secret: &[u8],
     token: CsrfToken,
 ) -> Option<DateTime<Utc>> {
-    let result = compute_digest(digest, &token.nonce, &token.expiry, &secret);
+    let result = compute_digest(digest, &token.nonce, &token.expiry, secret);
     if result == token.digest {
         Some(token.expiry)
     } else {
@@ -176,23 +179,22 @@ impl<D: Digest, R: Rng + CryptoRng> CsrfTokenGenerator<D, R> {
     }
 
     /// Verify a token received from a client.
-    pub fn verify(&mut self, token: &[u8]) -> CsrfTokenVerification {
+    pub fn verify(&mut self, token: &[u8]) -> CsrfTokenResult<()> {
         let token =
             match CsrfToken::from_bytes(token, self.secret.len(), self.digest.output_bytes()) {
                 Some(token) => token,
-                None => return CsrfTokenVerification::Invalid,
+                None => return Err(CsrfTokenError::TokenInvalid),
             };
-        // FIXME secret.clone 無くしたい
-        if let Some(expiry) =
-            verify_token_then_take_expiry(&mut self.digest, self.secret.clone(), token)
-        {
-            if Utc::now() < expiry {
-                CsrfTokenVerification::Success
-            } else {
-                CsrfTokenVerification::Expired
+
+        match verify_token_then_take_expiry(&mut self.digest, &self.secret, token) {
+            Some(expiry) => {
+                if Utc::now() < expiry {
+                    Ok(())
+                } else {
+                    Err(CsrfTokenError::TokenExpired)
+                }
             }
-        } else {
-            CsrfTokenVerification::Invalid
+            None => Err(CsrfTokenError::TokenInvalid),
         }
     }
 }
@@ -209,10 +211,7 @@ mod tests {
     fn test_verify_success() {
         let mut generator = default_csrf_token_generator(secret(), Duration::days(1));
         let token = generator.generate();
-        match generator.verify(&token) {
-            CsrfTokenVerification::Success => (),
-            _ => panic!(),
-        }
+        assert!(generator.verify(&token).is_ok());
     }
 
     #[test]
@@ -223,7 +222,7 @@ mod tests {
         another_secret[0] += 1;
         let mut another_generator = default_csrf_token_generator(another_secret, Duration::days(1));
         match another_generator.verify(&token) {
-            CsrfTokenVerification::Invalid => (),
+            Err(CsrfTokenError::TokenInvalid) => (),
             _ => panic!(),
         }
     }
@@ -233,7 +232,7 @@ mod tests {
         let mut generator = default_csrf_token_generator(secret(), Duration::nanoseconds(1));
         let token = generator.generate();
         match generator.verify(&token) {
-            CsrfTokenVerification::Expired => (),
+            Err(CsrfTokenError::TokenExpired) => (),
             _ => panic!(),
         }
     }

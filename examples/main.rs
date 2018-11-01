@@ -4,7 +4,7 @@ extern crate crypto;
 extern crate csrf_token;
 
 use chrono::Duration;
-use csrf_token::{default_csrf_token_generator, CsrfTokenVerification};
+use csrf_token::{default_csrf_token_generator, CsrfTokenError};
 use std::io::{stdin, stdout, Write};
 
 fn secret() -> Vec<u8> {
@@ -29,9 +29,13 @@ fn main() {
 
     match base64::decode(&given_token) {
         Ok(decoded) => match generator.verify(&decoded) {
-            CsrfTokenVerification::Success => println!("Verification success"),
-            CsrfTokenVerification::Expired => println!("Verification failed: the token is expired"),
-            CsrfTokenVerification::Invalid => println!("Verification failed: the token is invalid"),
+            Ok(_) => println!("Verification success"),
+            Err(CsrfTokenError::TokenExpired) => {
+                println!("Verification failed: the token is expired")
+            }
+            Err(CsrfTokenError::TokenInvalid) => {
+                println!("Verification failed: the token is invalid")
+            }
         },
         Err(_) => println!("base64 decode error"),
     }
