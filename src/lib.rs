@@ -7,38 +7,16 @@ extern crate rand;
 
 use byteorder::{BigEndian, ByteOrder};
 use chrono::prelude::*;
-use chrono::Duration;
+use chrono::{naive::NaiveDateTime, Duration};
 use crypto::{digest::Digest, sha2::Sha256};
 use rand::{thread_rng, CryptoRng, Rng, ThreadRng};
 use std::io::{Cursor, Read, Write};
-use std::mem::size_of;
-
-/// 時刻はナノ秒単位のUNIX Epochをi64で持っておく。
-/// chrono::DateTimeは、文字列化の前後で同じ値になるかどうかが明らかでないが、
-/// i64にすれば、byteorderでシリアライズしたものをデシリアライズすれば、
-/// 確実に同じ値になる。
-type DateTimeInt = i64;
-type DateTimeBytes = [u8; 8];
-
-fn date_time_chrono_to_int<Tz: TimeZone>(date_time: DateTime<Tz>) -> DateTimeInt {
-    date_time.timestamp_nanos()
-}
-
-fn date_time_int_to_bytes(date_time: DateTimeInt) -> DateTimeBytes {
-    let mut buf = [0; 8];
-    BigEndian::write_i64(&mut buf, date_time);
-    buf
-}
-
-fn date_time_bytes_to_int(date_time: DateTimeBytes) -> DateTimeInt {
-    BigEndian::read_i64(&date_time)
-}
 
 struct CsrfToken {
     /// Random value different for each token.
     nonce: Vec<u8>,
-    /// UTC Expiry time in big endian encoded UNIX epoch for nanoseconds.
-    expiry: DateTimeBytes,
+    /// UTC Expiry time.
+    expiry: DateTime<Utc>,
     /// Hash digest of nonce and expiry used for verification.
     digest: Vec<u8>,
 }
@@ -47,7 +25,10 @@ impl CsrfToken {
     fn to_bytes(&self) -> Vec<u8> {
         let mut result = Vec::new();
         result.write(&self.nonce).unwrap();
-        result.write(&self.expiry).unwrap();
+        // expiry from big endian encoded UNIX epoch for nanoseconds
+        let mut buf = [0; 8];
+        BigEndian::write_i64(&mut buf, self.expiry.timestamp_nanos());
+        result.write(&buf).unwrap();
         result.write(&self.digest).unwrap();
         result
     }
@@ -57,8 +38,17 @@ impl CsrfToken {
 
         let mut nonce = vec![0; secret_size];
         reader.read_exact(&mut nonce).ok()?;
-        let mut expiry = [0; size_of::<DateTimeBytes>()];
-        reader.read_exact(&mut expiry).ok()?;
+        let mut buf = [0; 8];
+        reader.read_exact(&mut buf).ok()?;
+
+        // expiry from big endian encoded UNIX epoch for nanoseconds
+        let ts_nanos = BigEndian::read_i64(&buf);
+        let tm = NaiveDateTime::from_timestamp(
+            ts_nanos / 1_000_000_000,
+            (ts_nanos % 1_000_000_000) as u32,
+        );
+        let expiry = DateTime::<Utc>::from_utc(tm, Utc);
+
         let mut digest = vec![0; digest_size];
         reader.read_exact(&mut digest).ok()?;
 
@@ -76,7 +66,7 @@ impl CsrfToken {
 
 pub struct CsrfTokenGenerator<D: Digest, R: Rng + CryptoRng> {
     secret: Vec<u8>,
-    duration: DateTimeInt,
+    duration: Duration,
     nonce_size: usize,
     rng: R,
     digest: D,
@@ -105,6 +95,37 @@ pub fn default_csrf_token_generator(
     CsrfTokenGenerator::new(secret, duration, 32, thread_rng(), Sha256::new())
 }
 
+fn compute_digest<D: Digest>(
+    digest: &mut D,
+    nonce: &Vec<u8>,
+    expiry: &DateTime<Utc>,
+    secret: &Vec<u8>,
+) -> Vec<u8> {
+    let mut buf = [0; 8];
+    BigEndian::write_i64(&mut buf, expiry.timestamp_nanos());
+
+    digest.input(nonce);
+    digest.input(&buf);
+    digest.input(secret);
+    let mut result = vec![0; digest.output_bytes()];
+    digest.result(&mut result);
+    digest.reset();
+    result
+}
+
+fn verify_token_then_take_expiry<D: Digest>(
+    digest: &mut D,
+    secret: Vec<u8>,
+    token: CsrfToken,
+) -> Option<DateTime<Utc>> {
+    let result = compute_digest(digest, &token.nonce, &token.expiry, &secret);
+    if result == token.digest {
+        Some(token.expiry)
+    } else {
+        None
+    }
+}
+
 impl<D: Digest, R: Rng + CryptoRng> CsrfTokenGenerator<D, R> {
     /// Create a `CsrfTokenGenerator`.
     ///
@@ -121,7 +142,7 @@ impl<D: Digest, R: Rng + CryptoRng> CsrfTokenGenerator<D, R> {
         assert!(duration > Duration::zero());
         CsrfTokenGenerator {
             secret,
-            duration: duration.num_nanoseconds().unwrap(),
+            duration: duration,
             nonce_size,
             rng,
             digest,
@@ -141,20 +162,11 @@ impl<D: Digest, R: Rng + CryptoRng> CsrfTokenGenerator<D, R> {
     /// The generated token passes `verify` method of `CsrfTokenGenerator`
     /// with the same secret and nonce size used for token generation.
     pub fn generate(&mut self) -> Vec<u8> {
-        let now = date_time_chrono_to_int(Utc::now());
-
         let mut nonce = vec![0; self.nonce_size];
         self.rng.fill(nonce.as_mut_slice());
-        let expiry = date_time_int_to_bytes(now + self.duration);
 
-        self.digest.input(&nonce);
-        self.digest.input(&expiry);
-        self.digest.input(&self.secret);
-
-        let mut digest = vec![0; self.digest.output_bytes()];
-        self.digest.result(&mut digest);
-        self.digest.reset();
-
+        let expiry = Utc::now() + self.duration;
+        let digest = compute_digest(&mut self.digest, &nonce, &expiry, &self.secret);
         let token = CsrfToken {
             nonce,
             expiry,
@@ -165,23 +177,16 @@ impl<D: Digest, R: Rng + CryptoRng> CsrfTokenGenerator<D, R> {
 
     /// Verify a token received from a client.
     pub fn verify(&mut self, token: &[u8]) -> CsrfTokenVerification {
-        let now = date_time_chrono_to_int(Utc::now());
         let token =
             match CsrfToken::from_bytes(token, self.secret.len(), self.digest.output_bytes()) {
                 Some(token) => token,
                 None => return CsrfTokenVerification::Invalid,
             };
-
-        self.digest.input(&token.nonce);
-        self.digest.input(&token.expiry);
-        self.digest.input(&self.secret);
-
-        let mut result = vec![0; self.digest.output_bytes()];
-        self.digest.result(&mut result);
-        self.digest.reset();
-
-        if result == token.digest {
-            if now < date_time_bytes_to_int(token.expiry) {
+        // FIXME secret.clone 無くしたい
+        if let Some(expiry) =
+            verify_token_then_take_expiry(&mut self.digest, self.secret.clone(), token)
+        {
+            if Utc::now() < expiry {
                 CsrfTokenVerification::Success
             } else {
                 CsrfTokenVerification::Expired
