@@ -207,9 +207,10 @@ impl CsrfTokenGenerator {
     /// If you need to generate tokens extremely frequently,
     /// using this method instead of `generate` might improve performance.
     ///
-    /// The given digest calculator must be the initial state.
+    /// The digest calculator is reset before token generation,
+    /// so you can pass an already used digest calculator without resetting.
     ///
-    /// The digest calculator is reset after token generation.
+    /// After generating a token, the digest calculator is not reset.
     ///
     /// # Example
     ///
@@ -242,9 +243,8 @@ impl CsrfTokenGenerator {
     /// }
     /// ```
     pub fn generate_with_digest(&self, digest: &mut Sha256) -> Vec<u8> {
-        let token = generate_token(&self.secret, self.duration, self.nonce_size, digest).to_bytes();
         digest.reset();
-        token
+        generate_token(&self.secret, self.duration, self.nonce_size, digest).to_bytes()
     }
 
     /// Verify a token received from a client.
@@ -262,9 +262,10 @@ impl CsrfTokenGenerator {
     /// If you need to verify tokens extremely frequently,
     /// using this method instead of `verify` might improve performance.
     ///
-    /// The given digest calculator must be the initial state.
+    /// The digest calculator is reset before token verification,
+    /// so you can pass an already used digest calculator without resetting.
     ///
-    /// The digest calculator is reset after token generation.
+    /// After verifying a token, the digest calculator is not reset.
     ///
     /// # Example
     ///
@@ -297,9 +298,8 @@ impl CsrfTokenGenerator {
     /// }
     /// ```
     pub fn verify_with_digest(&self, token: &[u8], digest: &mut Sha256) -> CsrfTokenResult<()> {
-        let result = verify_token(&self.secret, digest, token, Utc::now());
         digest.reset();
-        result
+        verify_token(&self.secret, digest, token, Utc::now())
     }
 }
 
