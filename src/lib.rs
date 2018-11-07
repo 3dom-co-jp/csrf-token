@@ -350,4 +350,13 @@ mod tests {
             _ => panic!(),
         }
     }
+
+    #[test]
+    fn test_verify_undecodable_token() {
+        let generator = CsrfTokenGenerator::new(secret(), Duration::days(1));
+        match generator.verify(&[]) {
+            Err(CsrfTokenError::TokenInvalid) => (),
+            _ => panic!(),
+        }
+    }
 }
