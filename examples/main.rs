@@ -4,7 +4,7 @@ extern crate crypto;
 extern crate csrf_token;
 
 use chrono::Duration;
-use csrf_token::{default_csrf_token_generator, CsrfTokenError};
+use csrf_token::{CsrfTokenError, CsrfTokenGenerator};
 use std::io::{stdin, stdout, Write};
 
 fn secret() -> Vec<u8> {
@@ -12,7 +12,7 @@ fn secret() -> Vec<u8> {
 }
 
 fn main() {
-    let mut generator = default_csrf_token_generator(secret(), Duration::minutes(10));
+    let generator = CsrfTokenGenerator::new(secret(), Duration::minutes(10));
 
     let token = generator.generate();
     let token_encoded = base64::encode(&token);
