@@ -1,4 +1,16 @@
 //! Generation and verification of CSRF prevention tokens.
+//!
+//! Token generation and verification need a secret value of `Vec<u8>`.
+//! It must be unpredictable.
+//!
+//! A generated token consists of 3 parts.
+//!
+//! - nonce
+//! - expiry date and time
+//! - hash digest of secret, nonce and expiry
+//!
+//! These values are not private. The client can get to know these values
+//! by investigating the given token.
 
 extern crate byteorder;
 extern crate chrono;
@@ -11,18 +23,21 @@ use chrono::prelude::*;
 use chrono::{naive::NaiveDateTime, Duration};
 use crypto::{digest::Digest, sha2::Sha256};
 use failure::Fail;
-use rand::{thread_rng, CryptoRng, Rng, ThreadRng};
+use rand::{thread_rng, Rng};
 use std::io::{Cursor, Read, Write};
 
 #[derive(Debug, Fail)]
 pub enum CsrfTokenError {
+    /// The verified token is fake.
     #[fail(display = "CSRF token is invalid")]
     TokenInvalid,
 
+    /// The verified token is authentic, but expired.
     #[fail(display = "CSRF token is expired")]
     TokenExpired,
 }
 
+/// Result type with `CsrfTokenError` error type.
 pub type CsrfTokenResult<T> = Result<T, CsrfTokenError>;
 
 struct CsrfToken {
@@ -77,29 +92,8 @@ impl CsrfToken {
     }
 }
 
-pub struct CsrfTokenGenerator<D: Digest, R: Rng + CryptoRng> {
-    secret: Vec<u8>,
-    duration: Duration,
-    nonce_size: usize,
-    rng: R,
-    digest: D,
-}
-
-/// Create a `CsrfTokenGenerator` with default nonce size, random number generator
-/// and hash digest generator.
-///
-/// # Panics
-///
-/// Panics if `duration` is not positive or extremely large (about 584 years).
-pub fn default_csrf_token_generator(
-    secret: Vec<u8>,
-    duration: Duration,
-) -> CsrfTokenGenerator<Sha256, ThreadRng> {
-    CsrfTokenGenerator::new(secret, duration, 32, thread_rng(), Sha256::new())
-}
-
-fn compute_digest<D: Digest>(
-    digest: &mut D,
+fn compute_digest(
+    digest: &mut Sha256,
     nonce: &[u8],
     expiry: &DateTime<Utc>,
     secret: &[u8],
@@ -112,90 +106,200 @@ fn compute_digest<D: Digest>(
     digest.input(secret);
     let mut result = vec![0; digest.output_bytes()];
     digest.result(&mut result);
-    digest.reset();
     result
 }
 
-fn verify_token_then_take_expiry<D: Digest>(
-    digest: &mut D,
+fn generate_token(
     secret: &[u8],
-    token: CsrfToken,
-) -> Option<DateTime<Utc>> {
-    let result = compute_digest(digest, &token.nonce, &token.expiry, secret);
-    if result == token.digest {
-        Some(token.expiry)
-    } else {
-        None
+    duration: Duration,
+    nonce_size: usize,
+    digest: &mut Sha256,
+) -> CsrfToken {
+    let mut nonce = vec![0; nonce_size];
+    thread_rng().fill(nonce.as_mut_slice());
+    let expiry = Utc::now() + duration;
+    let digest = compute_digest(digest, &nonce, &expiry, secret);
+
+    CsrfToken {
+        nonce,
+        expiry,
+        digest,
     }
 }
 
-impl<D: Digest, R: Rng + CryptoRng> CsrfTokenGenerator<D, R> {
-    /// Create a `CsrfTokenGenerator`.
+fn verify_token(
+    secret: &[u8],
+    digest: &mut Sha256,
+    token: &[u8],
+    now: DateTime<Utc>,
+) -> CsrfTokenResult<()> {
+    let token = match CsrfToken::from_bytes(token, secret.len(), digest.output_bytes()) {
+        Some(token) => token,
+        None => return Err(CsrfTokenError::TokenInvalid),
+    };
+
+    if compute_digest(digest, &token.nonce, &token.expiry, secret) != token.digest {
+        return Err(CsrfTokenError::TokenInvalid);
+    }
+
+    if now >= token.expiry {
+        return Err(CsrfTokenError::TokenExpired);
+    }
+
+    Ok(())
+}
+
+// CsrfTokenGeneratorは、ハッシュ生成器と乱数生成器を
+// 型パラメータとして持つ設計にすることもできる。
+// だが、ハッシュ・乱数生成アルゴリズムを変更することを考えたとき、
+// このモジュールだけ変更をするほうが楽なので、あえて単相にした。
+
+/// Token generator and verifier.
+///
+/// See `examples/main.rs` for usage.
+pub struct CsrfTokenGenerator {
+    secret: Vec<u8>,
+    duration: Duration,
+    nonce_size: usize,
+}
+
+impl CsrfTokenGenerator {
+    /// Create a `CsrfTokenGenerator` with default nonce size.
     ///
     /// # Panics
     ///
     /// Panics if `duration` is not positive or extremely large (about 584 years).
-    pub fn new(
+    pub fn new(secret: Vec<u8>, duration: Duration) -> CsrfTokenGenerator {
+        CsrfTokenGenerator::with_nonce_size(secret, duration, 32)
+    }
+
+    /// Create a `CsrfTokenGenerator` with the given nonce size in bytes.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `duration` is not positive or extremely large (about 584 years).
+    pub fn with_nonce_size(
         secret: Vec<u8>,
         duration: Duration,
         nonce_size: usize,
-        rng: R,
-        digest: D,
-    ) -> CsrfTokenGenerator<D, R> {
+    ) -> CsrfTokenGenerator {
         assert!(duration > Duration::zero());
         CsrfTokenGenerator {
             secret,
-            duration: duration,
+            duration,
             nonce_size,
-            rng,
-            digest,
         }
     }
 
     /// Generate a token to be sent to a client.
-    ///
-    /// A token consists of 3 parts.
-    ///
-    /// - nonce
-    /// - expiry date and time
-    /// - hash digest of nonce and expiry
-    ///
-    /// Clients can know these values by investigating the given token.
-    ///
-    /// The generated token passes `verify` method of `CsrfTokenGenerator`
-    /// with the same secret and nonce size used for token generation.
-    pub fn generate(&mut self) -> Vec<u8> {
-        let mut nonce = vec![0; self.nonce_size];
-        self.rng.fill(nonce.as_mut_slice());
+    pub fn generate(&self) -> Vec<u8> {
+        generate_token(
+            &self.secret,
+            self.duration,
+            self.nonce_size,
+            &mut Sha256::new(),
+        ).to_bytes()
+    }
 
-        let expiry = Utc::now() + self.duration;
-        let digest = compute_digest(&mut self.digest, &nonce, &expiry, &self.secret);
-        let token = CsrfToken {
-            nonce,
-            expiry,
-            digest,
-        };
-        token.to_bytes()
+    /// Generate a token using the given hash digest calculator.
+    ///
+    /// You can reuse Sha256 struct (about 120 bytes) by this method.
+    /// If you need to generate tokens extremely frequently,
+    /// using this method instead of `generate` might improve performance.
+    ///
+    /// The given digest calculator must be the initial state.
+    ///
+    /// The digest calculator is reset after token generation.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # extern crate chrono;
+    /// # extern crate crypto;
+    /// # extern crate csrf_token;
+    /// # #[macro_use] extern crate lazy_static;
+    /// # use std::cell::RefCell;
+    /// # use csrf_token::CsrfTokenGenerator;
+    /// use chrono::Duration;
+    /// use crypto::sha2::Sha256;
+    ///
+    /// # const SECRET: [u8; 32] = [0; 32];
+    /// // const SECRET: [u8; 32] = ...;
+    ///
+    /// lazy_static! {
+    ///     static ref CSRF_TOKEN_GENERATOR: CsrfTokenGenerator =
+    ///         CsrfTokenGenerator::new(SECRET.to_vec(), Duration::minutes(10));
+    /// }
+    ///
+    /// thread_local! {
+    ///     pub static DIGEST: RefCell<Sha256> = RefCell::new(Sha256::new());
+    /// }
+    ///
+    /// fn get_token() -> Vec<u8> {
+    ///     DIGEST.with(|digest| {
+    ///         CSRF_TOKEN_GENERATOR.generate_with_digest(&mut *digest.borrow_mut())
+    ///     })
+    /// }
+    /// ```
+    pub fn generate_with_digest(&self, digest: &mut Sha256) -> Vec<u8> {
+        let token = generate_token(&self.secret, self.duration, self.nonce_size, digest).to_bytes();
+        digest.reset();
+        token
     }
 
     /// Verify a token received from a client.
-    pub fn verify(&mut self, token: &[u8]) -> CsrfTokenResult<()> {
-        let token =
-            match CsrfToken::from_bytes(token, self.secret.len(), self.digest.output_bytes()) {
-                Some(token) => token,
-                None => return Err(CsrfTokenError::TokenInvalid),
-            };
+    ///
+    /// You don't need to use same `CsrfTokenGeneratorWithState` instance
+    /// which generated the token, but it must have the same secret and nonce size
+    /// to verify the token correctly.
+    pub fn verify(&self, token: &[u8]) -> CsrfTokenResult<()> {
+        verify_token(&self.secret, &mut Sha256::new(), token, Utc::now())
+    }
 
-        match verify_token_then_take_expiry(&mut self.digest, &self.secret, token) {
-            Some(expiry) => {
-                if Utc::now() < expiry {
-                    Ok(())
-                } else {
-                    Err(CsrfTokenError::TokenExpired)
-                }
-            }
-            None => Err(CsrfTokenError::TokenInvalid),
-        }
+    /// Verify a token using the given hash digest calculator.
+    ///
+    /// You can reuse Sha256 struct (about 120 bytes) by this method.
+    /// If you need to verify tokens extremely frequently,
+    /// using this method instead of `verify` might improve performance.
+    ///
+    /// The given digest calculator must be the initial state.
+    ///
+    /// The digest calculator is reset after token generation.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # extern crate chrono;
+    /// # extern crate crypto;
+    /// # extern crate csrf_token;
+    /// # #[macro_use] extern crate lazy_static;
+    /// # use std::cell::RefCell;
+    /// # use csrf_token::{CsrfTokenGenerator, CsrfTokenResult};
+    /// use chrono::Duration;
+    /// use crypto::sha2::Sha256;
+    ///
+    /// # const SECRET: [u8; 32] = [0; 32];
+    /// // const SECRET: [u8; 32] = ...;
+    ///
+    /// lazy_static! {
+    ///     static ref CSRF_TOKEN_GENERATOR: CsrfTokenGenerator =
+    ///         CsrfTokenGenerator::new(SECRET.to_vec(), Duration::minutes(10));
+    /// }
+    ///
+    /// thread_local! {
+    ///     pub static DIGEST: RefCell<Sha256> = RefCell::new(Sha256::new());
+    /// }
+    ///
+    /// fn verify_token(token: &[u8]) -> CsrfTokenResult<()> {
+    ///     DIGEST.with(|digest| {
+    ///         CSRF_TOKEN_GENERATOR.verify_with_digest(&token, &mut *digest.borrow_mut())
+    ///     })
+    /// }
+    /// ```
+    pub fn verify_with_digest(&self, token: &[u8], digest: &mut Sha256) -> CsrfTokenResult<()> {
+        let result = verify_token(&self.secret, digest, token, Utc::now());
+        digest.reset();
+        result
     }
 }
 
@@ -209,18 +313,26 @@ mod tests {
 
     #[test]
     fn test_verify_success() {
-        let mut generator = default_csrf_token_generator(secret(), Duration::days(1));
+        let generator = CsrfTokenGenerator::new(secret(), Duration::days(1));
         let token = generator.generate();
         assert!(generator.verify(&token).is_ok());
     }
 
     #[test]
+    fn test_verify_with_digest_success() {
+        let mut digest = Sha256::new();
+        let generator = CsrfTokenGenerator::new(secret(), Duration::days(1));
+        let token = generator.generate_with_digest(&mut digest);
+        assert!(generator.verify_with_digest(&token, &mut digest).is_ok());
+    }
+
+    #[test]
     fn test_verify_fail() {
-        let mut generator = default_csrf_token_generator(secret(), Duration::days(1));
+        let generator = CsrfTokenGenerator::new(secret(), Duration::days(1));
         let token = generator.generate();
         let mut another_secret = secret();
         another_secret[0] += 1;
-        let mut another_generator = default_csrf_token_generator(another_secret, Duration::days(1));
+        let another_generator = CsrfTokenGenerator::new(another_secret, Duration::days(1));
         match another_generator.verify(&token) {
             Err(CsrfTokenError::TokenInvalid) => (),
             _ => panic!(),
@@ -229,9 +341,11 @@ mod tests {
 
     #[test]
     fn test_verify_expiry() {
-        let mut generator = default_csrf_token_generator(secret(), Duration::nanoseconds(1));
+        let generator = CsrfTokenGenerator::new(secret(), Duration::days(1));
         let token = generator.generate();
-        match generator.verify(&token) {
+
+        let now = Utc::now() + Duration::days(1) + Duration::seconds(1);
+        match verify_token(&secret(), &mut Sha256::new(), &token, now) {
             Err(CsrfTokenError::TokenExpired) => (),
             _ => panic!(),
         }
