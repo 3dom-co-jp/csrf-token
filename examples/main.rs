@@ -25,7 +25,7 @@ fn main() {
     stdout().flush().unwrap();
     let mut given_token = String::new();
     stdin().read_line(&mut given_token).unwrap();
-    // use trim_end in rust 1.31
+    // use trim_end in rust 1.30
     let given_token = given_token.trim_right();
 
     match base64::decode(&given_token) {
