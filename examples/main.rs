@@ -25,7 +25,8 @@ fn main() {
     stdout().flush().unwrap();
     let mut given_token = String::new();
     stdin().read_line(&mut given_token).unwrap();
-    let given_token = given_token.trim_end();
+    // use trim_end in rust 1.31
+    let given_token = given_token.trim_right();
 
     match base64::decode(&given_token) {
         Ok(decoded) => match generator.verify(&decoded) {
