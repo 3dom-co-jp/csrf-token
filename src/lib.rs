@@ -15,6 +15,7 @@
 extern crate byteorder;
 extern crate chrono;
 extern crate crypto;
+#[macro_use]
 extern crate failure;
 extern crate rand;
 
@@ -22,7 +23,6 @@ use byteorder::{BigEndian, ByteOrder};
 use chrono::prelude::*;
 use chrono::{naive::NaiveDateTime, Duration};
 use crypto::{digest::Digest, sha2::Sha256};
-use failure::Fail;
 use rand::{thread_rng, Rng};
 use std::io::{Cursor, Read, Write};
 
