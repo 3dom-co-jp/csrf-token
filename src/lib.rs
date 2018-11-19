@@ -61,14 +61,14 @@ impl CsrfToken {
         result
     }
 
-    fn from_bytes(bytes: &[u8], secret_size: usize, digest_size: usize) -> Option<CsrfToken> {
+    fn from_bytes(bytes: &[u8], nonce_size: usize, digest_size: usize) -> Option<CsrfToken> {
         let mut reader = Cursor::new(bytes);
 
-        let mut nonce = vec![0; secret_size];
+        let mut nonce = vec![0; nonce_size];
         reader.read_exact(&mut nonce).ok()?;
+
         let mut buf = [0; 8];
         reader.read_exact(&mut buf).ok()?;
-
         // expiry from big endian encoded UNIX epoch for nanoseconds
         let ts_nanos = BigEndian::read_i64(&buf);
         let tm = NaiveDateTime::from_timestamp(
@@ -131,9 +131,10 @@ fn verify_token(
     secret: &[u8],
     digest: &mut Sha256,
     token: &[u8],
+    nonce_size: usize,
     now: DateTime<Utc>,
 ) -> CsrfTokenResult<()> {
-    let token = match CsrfToken::from_bytes(token, secret.len(), digest.output_bytes()) {
+    let token = match CsrfToken::from_bytes(token, nonce_size, digest.output_bytes()) {
         Some(token) => token,
         None => return Err(CsrfTokenError::TokenInvalid),
     };
@@ -253,7 +254,13 @@ impl CsrfTokenGenerator {
     /// which generated the token, but it must have the same secret and nonce size
     /// to verify the token correctly.
     pub fn verify(&self, token: &[u8]) -> CsrfTokenResult<()> {
-        verify_token(&self.secret, &mut Sha256::new(), token, Utc::now())
+        verify_token(
+            &self.secret,
+            &mut Sha256::new(),
+            token,
+            self.nonce_size,
+            Utc::now(),
+        )
     }
 
     /// Verify a token using the given hash digest calculator.
@@ -299,7 +306,7 @@ impl CsrfTokenGenerator {
     /// ```
     pub fn verify_with_digest(&self, token: &[u8], digest: &mut Sha256) -> CsrfTokenResult<()> {
         digest.reset();
-        verify_token(&self.secret, digest, token, Utc::now())
+        verify_token(&self.secret, digest, token, self.nonce_size, Utc::now())
     }
 }
 
@@ -311,9 +318,20 @@ mod tests {
         b"0123456789abcedf0123456789abcdef".to_vec()
     }
 
+    fn long_secret() -> Vec<u8> {
+        b"0123456789abcedf0123456789abcdef0123456789abcedf0123456789abcdef0123456789abcedf0123456789abcdef".to_vec()
+    }
+
     #[test]
     fn test_verify_success() {
         let generator = CsrfTokenGenerator::new(secret(), Duration::days(1));
+        let token = generator.generate();
+        assert!(generator.verify(&token).is_ok());
+    }
+
+    #[test]
+    fn test_verify_with_long_secret_success() {
+        let generator = CsrfTokenGenerator::new(long_secret(), Duration::days(1));
         let token = generator.generate();
         assert!(generator.verify(&token).is_ok());
     }
@@ -341,11 +359,11 @@ mod tests {
 
     #[test]
     fn test_verify_expiry() {
-        let generator = CsrfTokenGenerator::new(secret(), Duration::days(1));
+        let generator = CsrfTokenGenerator::with_nonce_size(secret(), Duration::days(1), 32);
         let token = generator.generate();
 
         let now = Utc::now() + Duration::days(1) + Duration::seconds(1);
-        match verify_token(&secret(), &mut Sha256::new(), &token, now) {
+        match verify_token(&secret(), &mut Sha256::new(), &token, 32, now) {
             Err(CsrfTokenError::TokenExpired) => (),
             _ => panic!(),
         }
