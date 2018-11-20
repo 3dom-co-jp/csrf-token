@@ -164,6 +164,8 @@ pub struct CsrfTokenGenerator {
     nonce_size: usize,
 }
 
+const DEFAULT_NONCE_SIZE: usize = 32;
+
 impl CsrfTokenGenerator {
     /// Create a `CsrfTokenGenerator` with default nonce size.
     ///
@@ -171,7 +173,7 @@ impl CsrfTokenGenerator {
     ///
     /// Panics if `duration` is not positive or extremely large (about 584 years).
     pub fn new(secret: Vec<u8>, duration: Duration) -> CsrfTokenGenerator {
-        CsrfTokenGenerator::with_nonce_size(secret, duration, 32)
+        CsrfTokenGenerator::with_nonce_size(secret, duration, DEFAULT_NONCE_SIZE)
     }
 
     /// Create a `CsrfTokenGenerator` with the given nonce size in bytes.
@@ -359,11 +361,18 @@ mod tests {
 
     #[test]
     fn test_verify_expiry() {
-        let generator = CsrfTokenGenerator::with_nonce_size(secret(), Duration::days(1), 32);
+        let generator =
+            CsrfTokenGenerator::with_nonce_size(secret(), Duration::days(1), DEFAULT_NONCE_SIZE);
         let token = generator.generate();
 
         let now = Utc::now() + Duration::days(1) + Duration::seconds(1);
-        match verify_token(&secret(), &mut Sha256::new(), &token, 32, now) {
+        match verify_token(
+            &secret(),
+            &mut Sha256::new(),
+            &token,
+            DEFAULT_NONCE_SIZE,
+            now,
+        ) {
             Err(CsrfTokenError::TokenExpired) => (),
             _ => panic!(),
         }
