@@ -19,12 +19,15 @@ extern crate crypto;
 extern crate failure;
 extern crate rand;
 
-use byteorder::{BigEndian, ByteOrder};
-use chrono::prelude::*;
-use chrono::{naive::NaiveDateTime, Duration};
+mod digest;
+mod expiry;
+mod generate;
+mod verify;
+
+use chrono::{prelude::*, Duration};
 use crypto::{digest::Digest, sha2::Sha256};
-use rand::{thread_rng, Rng};
-use std::io::{Cursor, Read, Write};
+use generate::generate_token;
+use verify::verify_token;
 
 #[derive(Debug, Fail)]
 pub enum CsrfTokenError {
@@ -39,116 +42,6 @@ pub enum CsrfTokenError {
 
 /// Result type with `CsrfTokenError` error type.
 pub type CsrfTokenResult<T> = Result<T, CsrfTokenError>;
-
-struct CsrfToken {
-    /// Random value different for each token.
-    nonce: Vec<u8>,
-    /// UTC Expiry time.
-    expiry: DateTime<Utc>,
-    /// Hash digest of nonce and expiry used for verification.
-    digest: Vec<u8>,
-}
-
-impl CsrfToken {
-    fn to_bytes(&self) -> Vec<u8> {
-        let mut result = Vec::new();
-        result.write(&self.nonce).unwrap();
-        // expiry from big endian encoded UNIX epoch for nanoseconds
-        let mut buf = [0; 8];
-        BigEndian::write_i64(&mut buf, self.expiry.timestamp_nanos());
-        result.write(&buf).unwrap();
-        result.write(&self.digest).unwrap();
-        result
-    }
-
-    fn from_bytes(bytes: &[u8], nonce_size: usize, digest_size: usize) -> Option<CsrfToken> {
-        let mut reader = Cursor::new(bytes);
-
-        let mut nonce = vec![0; nonce_size];
-        reader.read_exact(&mut nonce).ok()?;
-
-        let mut buf = [0; 8];
-        reader.read_exact(&mut buf).ok()?;
-        // expiry from big endian encoded UNIX epoch for nanoseconds
-        let ts_nanos = BigEndian::read_i64(&buf);
-        let tm = NaiveDateTime::from_timestamp(
-            ts_nanos / 1_000_000_000,
-            (ts_nanos % 1_000_000_000) as u32,
-        );
-        let expiry = DateTime::<Utc>::from_utc(tm, Utc);
-
-        let mut digest = vec![0; digest_size];
-        reader.read_exact(&mut digest).ok()?;
-
-        if reader.position() < bytes.len() as u64 {
-            return None;
-        }
-
-        Some(CsrfToken {
-            nonce,
-            expiry,
-            digest,
-        })
-    }
-}
-
-fn compute_digest(
-    digest: &mut Sha256,
-    nonce: &[u8],
-    expiry: &DateTime<Utc>,
-    secret: &[u8],
-) -> Vec<u8> {
-    let mut buf = [0; 8];
-    BigEndian::write_i64(&mut buf, expiry.timestamp_nanos());
-
-    digest.input(nonce);
-    digest.input(&buf);
-    digest.input(secret);
-    let mut result = vec![0; digest.output_bytes()];
-    digest.result(&mut result);
-    result
-}
-
-fn generate_token(
-    secret: &[u8],
-    duration: Duration,
-    nonce_size: usize,
-    digest: &mut Sha256,
-) -> CsrfToken {
-    let mut nonce = vec![0; nonce_size];
-    thread_rng().fill(nonce.as_mut_slice());
-    let expiry = Utc::now() + duration;
-    let digest = compute_digest(digest, &nonce, &expiry, secret);
-
-    CsrfToken {
-        nonce,
-        expiry,
-        digest,
-    }
-}
-
-fn verify_token(
-    secret: &[u8],
-    digest: &mut Sha256,
-    token: &[u8],
-    nonce_size: usize,
-    now: DateTime<Utc>,
-) -> CsrfTokenResult<()> {
-    let token = match CsrfToken::from_bytes(token, nonce_size, digest.output_bytes()) {
-        Some(token) => token,
-        None => return Err(CsrfTokenError::TokenInvalid),
-    };
-
-    if compute_digest(digest, &token.nonce, &token.expiry, secret) != token.digest {
-        return Err(CsrfTokenError::TokenInvalid);
-    }
-
-    if now >= token.expiry {
-        return Err(CsrfTokenError::TokenExpired);
-    }
-
-    Ok(())
-}
 
 // CsrfTokenGeneratorは、ハッシュ生成器と乱数生成器を
 // 型パラメータとして持つ設計にすることもできる。
@@ -198,10 +91,10 @@ impl CsrfTokenGenerator {
     pub fn generate(&self) -> Vec<u8> {
         generate_token(
             &self.secret,
-            self.duration,
+            Utc::now() + self.duration,
             self.nonce_size,
             &mut Sha256::new(),
-        ).to_bytes()
+        )
     }
 
     /// Generate a token using the given hash digest calculator.
@@ -247,7 +140,12 @@ impl CsrfTokenGenerator {
     /// ```
     pub fn generate_with_digest(&self, digest: &mut Sha256) -> Vec<u8> {
         digest.reset();
-        generate_token(&self.secret, self.duration, self.nonce_size, digest).to_bytes()
+        generate_token(
+            &self.secret,
+            Utc::now() + self.duration,
+            self.nonce_size,
+            digest,
+        )
     }
 
     /// Verify a token received from a client.
