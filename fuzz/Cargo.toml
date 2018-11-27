@@ -1,0 +1,10 @@
+[package]
+name = "csrf-token-fuzz"
+version = "0.1.0"
+authors = ["Yusuke Yoshimoto <y.yoshimoto@f-s-r.jp>"]
+publish = false
+
+[dependencies]
+afl = "0.4"
+csrf-token = { path = ".." }
+chrono = "0.4.6"
