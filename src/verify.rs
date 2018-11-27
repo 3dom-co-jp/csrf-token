@@ -12,7 +12,7 @@ struct UnverifiedToken<'a> {
 
 impl<'a> UnverifiedToken<'a> {
     fn from_bytes(bytes: &[u8], nonce_size: usize, digest_size: usize) -> Option<UnverifiedToken> {
-        if bytes.len() != nonce_size + 8 + digest_size {
+        if bytes.len() != nonce_size + EXPIRY_SIZE + digest_size {
             return None;
         }
 
