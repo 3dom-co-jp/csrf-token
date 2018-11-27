@@ -7,7 +7,7 @@ Generation and verification of CSRF prevention tokens.
 Add the following dependency to `Cargo.toml`.
 
 ```
-csrf-token = { git = "ssh://git@github.com/future-science-research/csrf-token.git", tag = "0.1.0" }
+csrf-token = { git = "ssh://git@github.com/future-science-research/csrf-token.git", tag = "0.1.1" }
 ```
 
 ## Running Example
