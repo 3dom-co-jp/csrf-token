@@ -1,6 +1,6 @@
 [package]
 name = "csrf-token"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Yusuke Yoshimoto <y.yoshimoto@f-s-r.jp>"]
 publish = false
 
@@ -14,3 +14,9 @@ failure = "0.1.3"
 [dev-dependencies]
 base64 = "0.10.0"
 lazy_static = "1.2.0"
+hex = "0.3.2"
+actix-web = "0.7.14"
+mime = "0.3.12"
+serde_derive = "1.0.80"
+serde = "1.0.80"
+futures = "0.1.25"
