@@ -1,43 +1,112 @@
+extern crate actix_web;
 extern crate base64;
 extern crate chrono;
 extern crate crypto;
 extern crate csrf_token;
+#[macro_use]
+extern crate failure;
+extern crate futures;
+extern crate hex;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
 
+use actix_web::{
+    actix, error::UrlencodedError, server, App, AsyncResponder, HttpMessage, HttpRequest,
+    HttpResponse, Responder, ResponseError,
+};
 use chrono::Duration;
 use csrf_token::{CsrfTokenError, CsrfTokenGenerator};
-use std::io::{stdin, stdout, Write};
+use futures::Future;
+use std::fs::File;
+use std::io::{BufReader, Read};
+use std::sync::Arc;
 
-fn secret() -> Vec<u8> {
-    b"0123456789abcedf0123456789abcdef".to_vec()
+#[derive(Debug, Fail)]
+enum ApplicationError {
+    #[fail(display = "{}", _0)]
+    CsrfTokenError(CsrfTokenError),
+
+    #[fail(display = "malformed request parameter")]
+    RequestParamError,
+}
+
+impl From<CsrfTokenError> for ApplicationError {
+    fn from(error: CsrfTokenError) -> ApplicationError {
+        ApplicationError::CsrfTokenError(error)
+    }
+}
+
+impl From<UrlencodedError> for ApplicationError {
+    fn from(_: UrlencodedError) -> ApplicationError {
+        ApplicationError::RequestParamError
+    }
+}
+
+impl ResponseError for ApplicationError {
+    fn error_response(&self) -> HttpResponse {
+        match self {
+            ApplicationError::CsrfTokenError(CsrfTokenError::TokenInvalid) => {
+                HttpResponse::Forbidden().body("Error: CSRF token invalid")
+            }
+            ApplicationError::CsrfTokenError(CsrfTokenError::TokenExpired) => {
+                HttpResponse::Forbidden().body("Error: CSRF token expired")
+            }
+            ApplicationError::RequestParamError => HttpResponse::BadRequest().finish(),
+        }
+    }
+}
+
+const FORM_TEMPLATE: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/form.html"));
+
+type State = Arc<CsrfTokenGenerator>;
+
+fn form(req: &HttpRequest<State>) -> impl Responder {
+    let generator = req.state();
+    let token = hex::encode(&generator.generate());
+    HttpResponse::Ok()
+        .content_type("text/html")
+        .body(FORM_TEMPLATE.replace("{{csrf-token}}", &token))
+}
+
+#[derive(Deserialize)]
+struct PostParams {
+    csrf_token: String,
+    message: String,
+}
+
+fn post(req: &HttpRequest<State>) -> impl Responder {
+    let generator = req.state().clone();
+    req.urlencoded::<PostParams>()
+        .from_err::<ApplicationError>()
+        .and_then(move |params| match hex::decode(&params.csrf_token) {
+            Ok(token) => {
+                generator.verify(&token)?;
+                Ok(HttpResponse::Ok().body("Posted message: ".to_string() + &params.message))
+            }
+            Err(_) => Err(CsrfTokenError::TokenInvalid.into()),
+        }).responder()
 }
 
 fn main() {
-    let generator = CsrfTokenGenerator::new(secret(), Duration::minutes(10));
+    let mut buf = String::new();
+    BufReader::new(File::open("examples/secret").expect("secret key file doesn't exist"))
+        .read_to_string(&mut buf)
+        .expect("failed to read secret key file");
+    let secret = hex::decode(buf.trim()).expect("failed to hex decode secret key file");
 
-    let token = generator.generate();
-    let token_encoded = base64::encode(&token);
-    println!(
-        "This token should be embedded in response body: {}",
-        token_encoded
-    );
+    let generator = Arc::new(CsrfTokenGenerator::new(secret, Duration::hours(1)));
 
-    print!("Input a token sent to the server: ");
-    stdout().flush().unwrap();
-    let mut given_token = String::new();
-    stdin().read_line(&mut given_token).unwrap();
-    // use trim_end in rust 1.30
-    let given_token = given_token.trim_right();
+    let sys = actix::System::new("example");
+    server::new(move || {
+        App::with_state(generator.clone())
+            .resource("/", |r| r.get().f(form))
+            .resource("/post", |r| r.post().f(post))
+    }).bind("localhost:8080")
+    .expect("port 8080 unavailable")
+    .start();
 
-    match base64::decode(&given_token) {
-        Ok(decoded) => match generator.verify(&decoded) {
-            Ok(_) => println!("Verification success"),
-            Err(CsrfTokenError::TokenExpired) => {
-                println!("Verification failed: the token is expired")
-            }
-            Err(CsrfTokenError::TokenInvalid) => {
-                println!("Verification failed: the token is invalid")
-            }
-        },
-        Err(_) => println!("base64 decode error"),
-    }
+    println!("Access http://localhost:8080/");
+    sys.run();
 }
