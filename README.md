@@ -75,16 +75,10 @@ HttpResponse::Ok()
 Decode the token given by the client and call `verify` method.
 
 ```rust
-match generator.verify(token) {
-    Ok(()) => HttpResponse::Ok().body("Posted message: ".to_string() + message),
-    Err(CsrfTokenError::TokenInvalid) => {
-        HttpResponse::Forbidden().body("Error: CSRF token invalid")
-    }
-    Err(CsrfTokenError::TokenExpired) => {
-        HttpResponse::Forbidden().body("Error: CSRF token expired")
-    }
-}
+generator.verify(&token)?;
 ```
+
+It returns `Result<(), CsrfTokenError>`.
 
 ## License
 

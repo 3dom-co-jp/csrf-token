@@ -3,6 +3,8 @@ extern crate base64;
 extern crate chrono;
 extern crate crypto;
 extern crate csrf_token;
+#[macro_use]
+extern crate failure;
 extern crate futures;
 extern crate hex;
 extern crate serde;
@@ -10,8 +12,8 @@ extern crate serde;
 extern crate serde_derive;
 
 use actix_web::{
-    actix, error::Error as ActixWebError, server, App, AsyncResponder, HttpMessage, HttpRequest,
-    HttpResponse, Responder,
+    actix, error::UrlencodedError, server, App, AsyncResponder, HttpMessage, HttpRequest,
+    HttpResponse, Responder, ResponseError,
 };
 use chrono::Duration;
 use csrf_token::{CsrfTokenError, CsrfTokenGenerator};
@@ -19,6 +21,41 @@ use futures::Future;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::sync::Arc;
+
+#[derive(Debug, Fail)]
+enum ApplicationError {
+    #[fail(display = "{}", _0)]
+    CsrfTokenError(CsrfTokenError),
+
+    #[fail(display = "malformed request parameter")]
+    RequestParamError,
+}
+
+impl From<CsrfTokenError> for ApplicationError {
+    fn from(error: CsrfTokenError) -> ApplicationError {
+        ApplicationError::CsrfTokenError(error)
+    }
+}
+
+impl From<UrlencodedError> for ApplicationError {
+    fn from(_: UrlencodedError) -> ApplicationError {
+        ApplicationError::RequestParamError
+    }
+}
+
+impl ResponseError for ApplicationError {
+    fn error_response(&self) -> HttpResponse {
+        match self {
+            ApplicationError::CsrfTokenError(CsrfTokenError::TokenInvalid) => {
+                HttpResponse::Forbidden().body("Error: CSRF token invalid")
+            }
+            ApplicationError::CsrfTokenError(CsrfTokenError::TokenExpired) => {
+                HttpResponse::Forbidden().body("Error: CSRF token expired")
+            }
+            ApplicationError::RequestParamError => HttpResponse::BadRequest().finish(),
+        }
+    }
+}
 
 const FORM_TEMPLATE: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/form.html"));
@@ -42,23 +79,14 @@ struct PostParams {
 fn post(req: &HttpRequest<State>) -> impl Responder {
     let generator = req.state().clone();
     req.urlencoded::<PostParams>()
-        .from_err::<ActixWebError>()
+        .from_err::<ApplicationError>()
         .and_then(move |params| match hex::decode(&params.csrf_token) {
-            Ok(token) => Ok(response_for_post(&params.message, &token, &generator)),
-            Err(_) => Ok(HttpResponse::Forbidden().body("Error: CSRF token invalid")),
+            Ok(token) => {
+                generator.verify(&token)?;
+                Ok(HttpResponse::Ok().body("Posted message: ".to_string() + &params.message))
+            }
+            Err(_) => Err(CsrfTokenError::TokenInvalid.into()),
         }).responder()
-}
-
-fn response_for_post(message: &str, token: &[u8], generator: &CsrfTokenGenerator) -> HttpResponse {
-    match generator.verify(token) {
-        Ok(()) => HttpResponse::Ok().body("Posted message: ".to_string() + message),
-        Err(CsrfTokenError::TokenInvalid) => {
-            HttpResponse::Forbidden().body("Error: CSRF token invalid")
-        }
-        Err(CsrfTokenError::TokenExpired) => {
-            HttpResponse::Forbidden().body("Error: CSRF token expired")
-        }
-    }
 }
 
 fn main() {
