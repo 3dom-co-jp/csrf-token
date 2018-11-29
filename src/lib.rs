@@ -31,7 +31,6 @@
 //!
 //! These values are not private. The client can get to know these values
 //! by investigating the given token.
-
 extern crate byteorder;
 extern crate chrono;
 extern crate crypto;
