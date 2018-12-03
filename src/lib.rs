@@ -47,7 +47,7 @@ mod verify;
 
 use chrono::{prelude::*, Duration};
 use generate::generate_token;
-use hmac::{Hmac, Mac};
+use hmac::Hmac;
 use sha2::Sha256;
 use verify::verify_token;
 type HmacSha256 = Hmac<Sha256>;
@@ -114,14 +114,7 @@ impl CsrfTokenGenerator {
 
     /// Generate a token to be sent to a client.
     pub fn generate(&self) -> Vec<u8> {
-        let mut digest =
-            HmacSha256::new_varkey(&self.secret).expect("invalid key for create HMACSHA256");
-        generate_token(
-            &self.secret,
-            Utc::now() + self.duration,
-            self.nonce_size,
-            &mut digest,
-        )
+        generate_token(&self.secret, Utc::now() + self.duration, self.nonce_size)
     }
 
     /// Verify a token received from a client.
@@ -130,15 +123,7 @@ impl CsrfTokenGenerator {
     /// which generated the token, but it must have the same secret and nonce size
     /// to verify the token correctly.
     pub fn verify(&self, token: &[u8]) -> CsrfTokenResult<()> {
-        let mut digest =
-            HmacSha256::new_varkey(&self.secret).expect("invalid key for create HMACSHA256");
-        verify_token(
-            &self.secret,
-            &mut digest,
-            token,
-            self.nonce_size,
-            Utc::now(),
-        )
+        verify_token(&self.secret, token, self.nonce_size, Utc::now())
     }
 }
 
@@ -187,9 +172,8 @@ mod tests {
             CsrfTokenGenerator::with_nonce_size(secret(), Duration::days(1), DEFAULT_NONCE_SIZE);
         let token = generator.generate();
 
-        let mut digest = HmacSha256::new_varkey(&secret()).expect("expect HMACSHA256 from varkey");
         let now = Utc::now() + Duration::days(1) + Duration::seconds(1);
-        match verify_token(&secret(), &mut digest, &token, DEFAULT_NONCE_SIZE, now) {
+        match verify_token(&secret(), &token, DEFAULT_NONCE_SIZE, now) {
             Err(CsrfTokenError::TokenExpired) => (),
             _ => panic!(),
         }

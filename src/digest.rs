@@ -18,16 +18,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
+use crate::HmacSha256;
+use hmac::Mac;
 
-pub(crate) fn compute_digest(
-    digest: &mut Hmac<Sha256>,
-    nonce: &[u8],
-    expiry: &[u8],
-    secret: &[u8],
-) -> Vec<u8> {
-    let mut digest = digest.clone(); // FIXME: noclone
+pub(crate) fn compute_digest(nonce: &[u8], expiry: &[u8], secret: &[u8]) -> Vec<u8> {
+    let mut digest = HmacSha256::new_varkey(secret).expect("create HMACSHA256 from varkey");
     digest.input(nonce);
     digest.input(expiry);
     digest.input(secret);

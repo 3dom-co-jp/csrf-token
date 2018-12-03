@@ -22,21 +22,14 @@ use chrono::prelude::*;
 use crate::HMACSHA256_BYTES;
 use digest::compute_digest;
 use expiry::{expiry_to_bytes, EXPIRY_SIZE};
-use hmac::Hmac;
 use rand::{thread_rng, Rng};
-use sha2::Sha256;
 use std::io::{self, Write};
 
-pub(super) fn generate_token(
-    secret: &[u8],
-    expiry: DateTime<Utc>,
-    nonce_size: usize,
-    digest: &mut Hmac<Sha256>,
-) -> Vec<u8> {
+pub(super) fn generate_token(secret: &[u8], expiry: DateTime<Utc>, nonce_size: usize) -> Vec<u8> {
     let mut nonce = vec![0; nonce_size];
     thread_rng().fill(nonce.as_mut_slice());
     let expiry = expiry_to_bytes(expiry);
-    let digest_value = compute_digest(digest, &nonce, &expiry, secret);
+    let digest_value = compute_digest(&nonce, &expiry, secret);
     let mut result = Vec::with_capacity(nonce_size + EXPIRY_SIZE + HMACSHA256_BYTES);
     result.write(&nonce).unwrap();
     result.write(&expiry).unwrap_or_else(|error| {
@@ -53,26 +46,18 @@ pub(super) fn generate_token(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::HmacSha256;
-    use hmac::Mac;
-
-    fn secret() -> Vec<u8> {
-        b"0123456789abcedf0123456789abcdef".to_vec()
-    }
 
     #[test]
     #[should_panic]
     fn test_generate_token_with_far_past_expiry() {
-        let mut digest = HmacSha256::new_varkey(&secret()).expect("expect HMACSHA256 from varkey");
         let expiry = DateTime::from_utc(NaiveDateTime::from_timestamp(i64::min_value(), 0), Utc);
-        generate_token(&[], expiry, 32, &mut digest);
+        generate_token(&[], expiry, 32);
     }
 
     #[test]
     #[should_panic]
     fn test_generate_token_with_far_future_expiry() {
-        let mut digest = HmacSha256::new_varkey(&secret()).expect("expect HMACSHA256 from varkey");
         let expiry = DateTime::from_utc(NaiveDateTime::from_timestamp(i64::max_value(), 0), Utc);
-        generate_token(&[], expiry, 32, &mut digest);
+        generate_token(&[], expiry, 32);
     }
 }
