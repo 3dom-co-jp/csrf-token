@@ -20,7 +20,10 @@
 
 use chrono::prelude::*;
 use crate::{CsrfTokenError, CsrfTokenResult};
-use crypto::{digest::Digest, sha2::Sha256};
+use hmac::Hmac;
+use sha2::Sha256;
+
+use crate::HMACSHA256_BYTES;
 use digest::compute_digest;
 use expiry::{bytes_to_expiry, EXPIRY_SIZE};
 
@@ -46,7 +49,7 @@ impl<'a> UnverifiedToken<'a> {
     fn verify(
         &self,
         secret: &[u8],
-        digest: &mut Sha256,
+        digest: &mut Hmac<Sha256>,
         now: DateTime<Utc>,
     ) -> CsrfTokenResult<()> {
         if compute_digest(digest, self.nonce, self.expiry, secret) != self.digest {
@@ -64,12 +67,12 @@ impl<'a> UnverifiedToken<'a> {
 
 pub(super) fn verify_token(
     secret: &[u8],
-    digest: &mut Sha256,
+    digest: &mut Hmac<Sha256>,
     token: &[u8],
     nonce_size: usize,
     now: DateTime<Utc>,
 ) -> CsrfTokenResult<()> {
-    UnverifiedToken::from_bytes(token, nonce_size, digest.output_bytes())
+    UnverifiedToken::from_bytes(token, nonce_size, HMACSHA256_BYTES)
         .ok_or(CsrfTokenError::TokenInvalid)
         .and_then(|token| token.verify(secret, digest, now))
 }

@@ -1,7 +1,6 @@
 extern crate actix_web;
 extern crate base64;
 extern crate chrono;
-extern crate crypto;
 extern crate csrf_token;
 #[macro_use]
 extern crate failure;
