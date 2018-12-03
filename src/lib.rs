@@ -27,7 +27,7 @@
 //!
 //! - nonce
 //! - expiry date and time
-//! - hash digest of secret, nonce and expiry
+//! - HMAC for nonce and expiry
 //!
 //! These values are not private. The client can get to know these values
 //! by investigating the given token.
@@ -40,16 +40,16 @@ extern crate sha2;
 extern crate failure;
 extern crate rand;
 
-mod digest;
 mod expiry;
 mod generate;
+mod signature;
 mod verify;
 
 use chrono::{prelude::*, Duration};
-use generate::generate_token;
+use crate::{generate::generate_token, verify::verify_token};
 use hmac::Hmac;
 use sha2::Sha256;
-use verify::verify_token;
+
 type HmacSha256 = Hmac<Sha256>;
 const HMACSHA256_BITS: usize = 256;
 const HMACSHA256_BYTES: usize = HMACSHA256_BITS / 8;

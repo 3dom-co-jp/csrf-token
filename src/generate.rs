@@ -19,9 +19,11 @@
 // SOFTWARE.
 
 use chrono::prelude::*;
-use crate::HMACSHA256_BYTES;
-use digest::compute_digest;
-use expiry::{expiry_to_bytes, EXPIRY_SIZE};
+use crate::{
+    expiry::{expiry_to_bytes, EXPIRY_SIZE},
+    signature::compute_signature,
+    HMACSHA256_BYTES,
+};
 use rand::{thread_rng, Rng};
 use std::io::{self, Write};
 
@@ -29,7 +31,8 @@ pub(super) fn generate_token(secret: &[u8], expiry: DateTime<Utc>, nonce_size: u
     let mut nonce = vec![0; nonce_size];
     thread_rng().fill(nonce.as_mut_slice());
     let expiry = expiry_to_bytes(expiry);
-    let digest_value = compute_digest(&nonce, &expiry, secret);
+    let signature_value = compute_signature(&nonce, &expiry, secret);
+
     let mut result = Vec::with_capacity(nonce_size + EXPIRY_SIZE + HMACSHA256_BYTES);
     result.write(&nonce).unwrap();
     result.write(&expiry).unwrap_or_else(|error| {
@@ -39,7 +42,7 @@ pub(super) fn generate_token(secret: &[u8], expiry: DateTime<Utc>, nonce_size: u
             unreachable!();
         }
     });
-    result.write(&digest_value).unwrap();
+    result.write(&signature_value).unwrap();
     result
 }
 

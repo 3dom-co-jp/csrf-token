@@ -19,16 +19,16 @@
 // SOFTWARE.
 
 use chrono::prelude::*;
-use crate::{CsrfTokenError, CsrfTokenResult};
-
-use crate::HMACSHA256_BYTES;
-use digest::compute_digest;
-use expiry::{bytes_to_expiry, EXPIRY_SIZE};
+use crate::{
+    expiry::{bytes_to_expiry, EXPIRY_SIZE},
+    signature::compute_signature,
+    CsrfTokenError, CsrfTokenResult, HMACSHA256_BYTES,
+};
 
 struct UnverifiedToken<'a> {
     nonce: &'a [u8],
     expiry: &'a [u8],
-    digest: &'a [u8],
+    signature: &'a [u8],
 }
 
 impl<'a> UnverifiedToken<'a> {
@@ -40,12 +40,12 @@ impl<'a> UnverifiedToken<'a> {
         Some(UnverifiedToken {
             nonce: &bytes[..nonce_size],
             expiry: &bytes[nonce_size..(nonce_size + EXPIRY_SIZE)],
-            digest: &bytes[(nonce_size + EXPIRY_SIZE)..],
+            signature: &bytes[(nonce_size + EXPIRY_SIZE)..],
         })
     }
 
     fn verify(&self, secret: &[u8], now: DateTime<Utc>) -> CsrfTokenResult<()> {
-        if compute_digest(self.nonce, self.expiry, secret) != self.digest {
+        if compute_signature(self.nonce, self.expiry, secret) != self.signature {
             return Err(CsrfTokenError::TokenInvalid);
         }
 

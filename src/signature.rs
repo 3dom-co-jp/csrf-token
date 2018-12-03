@@ -21,11 +21,10 @@
 use crate::HmacSha256;
 use hmac::Mac;
 
-pub(crate) fn compute_digest(nonce: &[u8], expiry: &[u8], secret: &[u8]) -> Vec<u8> {
-    let mut digest = HmacSha256::new_varkey(secret).expect("create HMACSHA256 from varkey");
-    digest.input(nonce);
-    digest.input(expiry);
-    digest.input(secret);
-    let result = digest.result();
-    result.code().into_iter().collect()
+pub(crate) fn compute_signature(nonce: &[u8], expiry: &[u8], secret: &[u8]) -> Vec<u8> {
+    let mut sign = HmacSha256::new_varkey(secret).expect("create HMACSHA256 from varkey");
+    sign.input(nonce);
+    sign.input(expiry);
+    let result = sign.result();
+    result.code().to_vec()
 }
