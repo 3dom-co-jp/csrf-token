@@ -18,18 +18,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crypto::{digest::Digest, sha2::Sha256};
+use crate::HmacSha256;
+use hmac::Mac;
 
-pub(crate) fn compute_digest(
-    digest: &mut Sha256,
-    nonce: &[u8],
-    expiry: &[u8],
-    secret: &[u8],
-) -> Vec<u8> {
-    digest.input(nonce);
-    digest.input(expiry);
-    digest.input(secret);
-    let mut result = vec![0; digest.output_bytes()];
-    digest.result(&mut result);
-    result
+pub(crate) fn compute_signature(nonce: &[u8], expiry: &[u8], secret: &[u8]) -> Vec<u8> {
+    let mut sign = HmacSha256::new_varkey(secret).expect("create HMACSHA256 from varkey");
+    sign.input(nonce);
+    sign.input(expiry);
+    let result = sign.result();
+    result.code().to_vec()
 }

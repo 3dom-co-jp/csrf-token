@@ -19,37 +19,33 @@
 // SOFTWARE.
 
 use chrono::prelude::*;
-use crate::{CsrfTokenError, CsrfTokenResult};
-use crypto::{digest::Digest, sha2::Sha256};
-use digest::compute_digest;
-use expiry::{bytes_to_expiry, EXPIRY_SIZE};
+use crate::{
+    expiry::{bytes_to_expiry, EXPIRY_SIZE},
+    signature::compute_signature,
+    CsrfTokenError, CsrfTokenResult, HMACSHA256_BYTES,
+};
 
 struct UnverifiedToken<'a> {
     nonce: &'a [u8],
     expiry: &'a [u8],
-    digest: &'a [u8],
+    signature: &'a [u8],
 }
 
 impl<'a> UnverifiedToken<'a> {
-    fn from_bytes(bytes: &[u8], nonce_size: usize, digest_size: usize) -> Option<UnverifiedToken> {
-        if bytes.len() != nonce_size + EXPIRY_SIZE + digest_size {
+    fn from_bytes(bytes: &[u8], nonce_size: usize) -> Option<UnverifiedToken> {
+        if bytes.len() != nonce_size + EXPIRY_SIZE + HMACSHA256_BYTES {
             return None;
         }
 
         Some(UnverifiedToken {
             nonce: &bytes[..nonce_size],
             expiry: &bytes[nonce_size..(nonce_size + EXPIRY_SIZE)],
-            digest: &bytes[(nonce_size + EXPIRY_SIZE)..],
+            signature: &bytes[(nonce_size + EXPIRY_SIZE)..],
         })
     }
 
-    fn verify(
-        &self,
-        secret: &[u8],
-        digest: &mut Sha256,
-        now: DateTime<Utc>,
-    ) -> CsrfTokenResult<()> {
-        if compute_digest(digest, self.nonce, self.expiry, secret) != self.digest {
+    fn verify(&self, secret: &[u8], now: DateTime<Utc>) -> CsrfTokenResult<()> {
+        if compute_signature(self.nonce, self.expiry, secret) != self.signature {
             return Err(CsrfTokenError::TokenInvalid);
         }
 
@@ -64,12 +60,11 @@ impl<'a> UnverifiedToken<'a> {
 
 pub(super) fn verify_token(
     secret: &[u8],
-    digest: &mut Sha256,
     token: &[u8],
     nonce_size: usize,
     now: DateTime<Utc>,
 ) -> CsrfTokenResult<()> {
-    UnverifiedToken::from_bytes(token, nonce_size, digest.output_bytes())
+    UnverifiedToken::from_bytes(token, nonce_size)
         .ok_or(CsrfTokenError::TokenInvalid)
-        .and_then(|token| token.verify(secret, digest, now))
+        .and_then(|token| token.verify(secret, now))
 }
