@@ -303,4 +303,9 @@ mod tests {
             _ => panic!(),
         }
     }
+
+    #[test]
+    fn fail_for_travis_ci() {
+        panic!();
+    }
 }
