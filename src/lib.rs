@@ -75,7 +75,6 @@ pub type CsrfTokenResult<T> = Result<T, CsrfTokenError>;
 
 /// Token generator and verifier.
 ///
-/// See `examples/main.rs` for usage.
 pub struct CsrfTokenGenerator {
     secret: Vec<u8>,
     duration: Duration,

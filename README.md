@@ -40,7 +40,7 @@ A CSRF prevention token is attached to the form as a hidden input. Check the sou
 
 ### Creating a Token Generator
 
-To generate a token, first of all, create a `CsrfTokenGenerator`. See [examples/main.rs](examples/main.rs).
+To generate a token, first of all, create a `CsrfTokenGenerator`.
 
 ```rust
 let generator = Arc::new(CsrfTokenGenerator::new(secret, Duration::hours(1)));
