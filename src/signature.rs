@@ -19,12 +19,12 @@
 // SOFTWARE.
 
 use crate::HmacSha256;
-use hmac::Mac;
+use hmac::{Mac, NewMac};
 
 pub(crate) fn compute_signature(nonce: &[u8], expiry: &[u8], secret: &[u8]) -> Vec<u8> {
     let mut sign = HmacSha256::new_varkey(secret).expect("create HMACSHA256 from varkey");
-    sign.input(nonce);
-    sign.input(expiry);
-    let result = sign.result();
-    result.code().to_vec()
+    sign.update(nonce);
+    sign.update(expiry);
+    let result = sign.finalize();
+    result.into_bytes().to_vec()
 }

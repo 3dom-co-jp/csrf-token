@@ -5,19 +5,11 @@ authors = ["Yusuke Yoshimoto <y.yoshimoto@f-s-r.jp>"]
 publish = false
 
 [dependencies]
-chrono = "0.4.6"
-rand = "0.5.5"
-byteorder = "1.2.6"
-failure = "0.1.3"
-hmac = "0.7.0"
-sha2 = "0.8.0"
+chrono = "0.4"
+rand = "0.5"
+byteorder = "1.2"
+thiserror = "1.0"
+hmac = "0.10"
+sha2 = "0.9"
 
-[dev-dependencies]
-base64 = "0.10.0"
-lazy_static = "1.2.0"
-hex = "0.3.2"
-actix-web = "0.7.14"
-mime = "0.3.12"
-serde_derive = "1.0.80"
-serde = "1.0.80"
-futures = "0.1.25"
+

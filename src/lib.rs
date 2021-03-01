@@ -36,8 +36,7 @@ extern crate byteorder;
 extern crate chrono;
 extern crate hmac;
 extern crate sha2;
-#[macro_use]
-extern crate failure;
+extern crate thiserror;
 extern crate rand;
 
 mod expiry;
@@ -45,6 +44,7 @@ mod generate;
 mod signature;
 mod verify;
 
+use thiserror::Error;
 use chrono::{prelude::*, Duration};
 use crate::{generate::generate_token, verify::verify_token};
 use hmac::Hmac;
@@ -54,14 +54,14 @@ type HmacSha256 = Hmac<Sha256>;
 const HMACSHA256_BITS: usize = 256;
 const HMACSHA256_BYTES: usize = HMACSHA256_BITS / 8;
 
-#[derive(Debug, Fail)]
+#[derive(Debug, Error)]
 pub enum CsrfTokenError {
     /// The verified token is fake.
-    #[fail(display = "CSRF token is invalid")]
+    #[error("CSRF token is invalid")]
     TokenInvalid,
 
     /// The verified token is authentic, but expired.
-    #[fail(display = "CSRF token is expired")]
+    #[error("CSRF token is expired")]
     TokenExpired,
 }
 
